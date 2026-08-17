@@ -47,6 +47,16 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Whether the built web client was found at startup; surfaced on /health. */
+let webClientStatus: { serving: boolean; path?: string; reason?: string } = {
+  serving: false,
+  reason: 'not initialised',
+};
+
+export function getWebClientStatus() {
+  return webClientStatus;
+}
+
 /**
  * Composition root. Every dependency is injectable so the integration tests can
  * drive the real Express app with a fake clock and scripted providers.
@@ -149,6 +159,21 @@ export function createApp(deps: AppDeps = {}): BuiltApp {
    * port with hot reload.
    */
   const webDist = findWebDist();
+
+  // Report it on /health. Without this, a service whose build command only
+  // built the API looks identical to a broken one: the API answers perfectly
+  // and `/` returns Express's bare "Cannot GET /", with nothing anywhere
+  // saying why.
+  webClientStatus = webDist
+    ? { serving: true, path: webDist }
+    : {
+        serving: false,
+        reason:
+          'No web bundle found. The build command only built the API. ' +
+          'Use `npm run build` (not `npm run build:server`) to build both, ' +
+          'or host the front end separately.',
+      };
+
   if (webDist) {
     app.use(
       express.static(webDist, {

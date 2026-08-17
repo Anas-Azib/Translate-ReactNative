@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { getWebClientStatus } from '../app.js';
 import { DEFAULT_SOURCE, DEFAULT_TARGET, LANGUAGES } from '../lib/languages.js';
 import { describeProviders } from '../services/providerFactory.js';
 import type { Providers } from '../types/index.js';
@@ -33,6 +34,7 @@ export function metaRoutes(
       providers: describeProviders(providers),
       haltedProviders: pipeline.circuit.status().map((h) => ({ provider: h.provider, kind: h.kind })),
       websocket: stats?.() ?? null,
+      webClient: getWebClientStatus(),
     });
   });
 

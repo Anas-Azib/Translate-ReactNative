@@ -4,7 +4,7 @@ import { loadEnv } from './lib/env.js';
 // Must run before createApp() reads process.env.
 const { loaded } = loadEnv();
 
-const { createApp } = await import('./app.js');
+const { createApp, getWebClientStatus } = await import('./app.js');
 const { describeProviders } = await import('./services/providerFactory.js');
 const { WebSocketHub } = await import('./ws/hub.js');
 
@@ -32,6 +32,16 @@ server.listen(config.port, host, () => {
   );
   console.log(`  Translate  ${modes.translate.name}  [${modes.translate.mode}]`);
   console.log(`  TTS        browser speechSynthesis  [on device]`);
+
+  // Say plainly whether the front end is being served. A silent skip here is
+  // what turns a correct API into a site that answers "Cannot GET /".
+  const web = getWebClientStatus();
+  console.log(
+    `  Web client ${web.serving ? `serving from ${web.path}` : 'NOT SERVED (API only)'}`,
+  );
+  if (!web.serving) {
+    console.warn(`\n  ⚠  ${web.reason}\n`);
+  }
   console.log(
     `  env        ${loaded.length ? loaded.join(', ') : 'none found (using defaults)'}`,
   );
