@@ -1,0 +1,137 @@
+/* ============================================================
+   Design tokens
+   ------------------------------------------------------------
+   Colour ramp is Apple's system palette (iOS 17 vibrant set).
+   Type scale, radii, and motion curves follow Apple's HIG:
+   large rounded corners, generous spacing, spring-like easing.
+   ============================================================ */
+
+:root {
+  /* ── System colours ─────────────────────────────────────── */
+  --blue: #0a84ff;
+  --blue-deep: #0060df;
+  --indigo: #5e5ce6;
+  --purple: #bf5af2;
+  --pink: #ff375f;
+  --red: #ff453a;
+  --orange: #ff9f0a;
+  --yellow: #ffd60a;
+  --green: #30d158;
+  --mint: #63e6e2;
+  --teal: #40c8e0;
+  --cyan: #64d2ff;
+
+  /* ── Semantic roles ─────────────────────────────────────── */
+  --source-a: #0a84ff;
+  --source-b: #64d2ff;
+  --target-a: #bf5af2;
+  --target-b: #ff375f;
+
+  /* ── Surfaces (dark is the default look) ────────────────── */
+  --bg-base: #05060f;
+  --bg-raise: #0c0e1c;
+  --surface: rgba(255, 255, 255, 0.07);
+  --surface-strong: rgba(255, 255, 255, 0.12);
+  --surface-solid: #14162a;
+  --hairline: rgba(255, 255, 255, 0.12);
+  --hairline-strong: rgba(255, 255, 255, 0.2);
+
+  --text: #ffffff;
+  --text-secondary: rgba(235, 235, 245, 0.65);
+  --text-tertiary: rgba(235, 235, 245, 0.4);
+  --text-on-accent: #ffffff;
+
+  /* ── Elevation ──────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --glow-blue: 0 0 40px rgba(10, 132, 255, 0.45);
+  --glow-pink: 0 0 40px rgba(255, 55, 95, 0.4);
+
+  /* ── Radii — Apple's continuous-corner feel ─────────────── */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 18px;
+  --r-lg: 26px;
+  --r-xl: 34px;
+  --r-full: 999px;
+
+  /* ── Spacing (4pt grid) ─────────────────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* ── Type ───────────────────────────────────────────────── */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+    system-ui, 'Helvetica Neue', sans-serif;
+  --font-arabic: 'SF Arabic', -apple-system, 'Geeza Pro', 'Noto Naskh Arabic', serif;
+  --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+
+  --t-caption2: 11px;
+  --t-caption: 12px;
+  --t-footnote: 13px;
+  --t-subhead: 15px;
+  --t-body: 17px; /* iOS default body size */
+  --t-headline: 17px;
+  --t-title3: 20px;
+  --t-title2: 22px;
+  --t-title1: 28px;
+  --t-large: 34px;
+
+  /* ── Motion ─────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --d-fast: 180ms;
+  --d-base: 320ms;
+  --d-slow: 560ms;
+
+  /* ── Layout ─────────────────────────────────────────────── */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --content-max: 520px;
+  --tap-min: 44px; /* Apple's minimum hit target */
+}
+
+/* Light appearance. Same hues, inverted surfaces — the vivid accents
+   carry the identity across both themes. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg-base: #f2f2f7;
+    --bg-raise: #ffffff;
+    --surface: rgba(255, 255, 255, 0.72);
+    --surface-strong: rgba(255, 255, 255, 0.9);
+    --surface-solid: #ffffff;
+    --hairline: rgba(60, 60, 67, 0.14);
+    --hairline-strong: rgba(60, 60, 67, 0.24);
+
+    --text: #000000;
+    --text-secondary: rgba(60, 60, 67, 0.68);
+    --text-tertiary: rgba(60, 60, 67, 0.42);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 8px 24px rgba(60, 60, 67, 0.12);
+    --shadow-lg: 0 20px 60px rgba(60, 60, 67, 0.18);
+  }
+}
+
+:root[data-theme='light'] {
+  --bg-base: #f2f2f7;
+  --bg-raise: #ffffff;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.9);
+  --surface-solid: #ffffff;
+  --hairline: rgba(60, 60, 67, 0.14);
+  --hairline-strong: rgba(60, 60, 67, 0.24);
+  --text: #000000;
+  --text-secondary: rgba(60, 60, 67, 0.68);
+  --text-tertiary: rgba(60, 60, 67, 0.42);
+  --shadow-md: 0 8px 24px rgba(60, 60, 67, 0.12);
+  --shadow-lg: 0 20px 60px rgba(60, 60, 67, 0.18);
+}
