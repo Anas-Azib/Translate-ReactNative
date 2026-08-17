@@ -307,64 +307,112 @@ Set only `VITE_API_URL` and the WebSocket URL is derived from it (`https` → `w
 
 ---
 
-## Render deployment
+## Deployment
 
-Deploys `apps/server` only. The web app is a static bundle and belongs on a
-static host.
+Two services, deployed separately from one repo:
 
-### Using the blueprint
+```
+        GitHub — one repo
+              │
+    ┌─────────┴─────────┐
+    │                   │
+  Vercel              Render
+  apps/web            apps/server
+  static bundle       Node + WebSocket
+    │                   │
+    └──── wss:// ───────┘
+```
 
-Commit `render.yaml`, then **Render → New → Blueprint** and select the repo.
+**Deploy Render first** — you need its URL before building the front end, because
+Vite inlines the API URL at build time.
 
-### Configuring by hand
+### Order of operations
+
+1. Deploy the backend to Render → get `https://YOUR-API.onrender.com`
+2. Deploy the front end to Vercel with `VITE_API_URL` set to that URL
+3. Set Render's `CORS_ORIGIN` to your Vercel domain
+4. Redeploy Render so the CORS change takes effect
+
+### 1. Render — `apps/server`
+
+Either commit `render.yaml` and use **New → Blueprint**, or configure manually:
 
 | Setting | Value |
 |---|---|
 | Type | Web Service |
 | Runtime | Node |
-| **Root Directory** | *(leave blank — the repo root)* |
+| **Root Directory** | *(blank — the repo root)* |
 | Build Command | `npm ci && npm run build:server` |
 | Start Command | `node apps/server/dist/index.js` |
 | Health Check Path | `/api/health` |
 | Instance Type | Starter or above |
 
-**Root Directory must be the repo root, not `apps/server`.** This is the step
-that catches people out with npm workspaces: `npm install` inside `apps/server`
-cannot resolve `@translate/shared`, because the workspace symlinks only exist
-when npm installs from the root.
+**Root Directory must be blank.** `npm install` inside `apps/server` cannot
+resolve `@translate/shared` — npm workspace symlinks only exist when the install
+runs at the root.
+
+**Do not use the free tier.** It sleeps after inactivity, which drops every open
+WebSocket and takes ~50 s to wake.
 
 Environment variables:
 
-| Key | Value | Why |
-|---|---|---|
-| `NODE_ENV` | `production` | |
-| `HOST` | `0.0.0.0` | Binding to localhost makes the service unreachable and fails the health check |
-| `PORT` | *(do not set)* | Render injects it; the app reads `process.env.PORT` |
-| `CORS_ORIGIN` | your web app's origin | `*` works but lock it down |
-| `WHISPER_MODEL` | `onnx-community/whisper-base` | `whisper-tiny` if memory constrained |
-| `WHISPER_WARMUP` | `true` | Loads weights at boot so the first user does not wait |
-| `MYMEMORY_EMAIL` | your address | Raises the daily allowance ~5k → ~50k characters |
-| `PAYLOAD_ENCRYPTION_KEY` | generate | Encrypts the in-flight audio buffer |
+| Key | Value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `HOST` | `0.0.0.0` |
+| `PORT` | *(do not set — Render injects it)* |
+| `CORS_ORIGIN` | your Vercel domain (step 3) |
+| `WHISPER_MODEL` | `onnx-community/whisper-base` |
+| `WHISPER_WARMUP` | `true` |
+| `MYMEMORY_EMAIL` | your email — raises the daily allowance ~5k → ~50k chars |
+| `PAYLOAD_ENCRYPTION_KEY` | generate a random value |
 
-**WebSockets.** Render supports them on paid instances with no extra
-configuration — the upgrade shares the HTTP port, which is why the WS server is
-attached to the existing HTTP server rather than listening separately. Avoid the
-free tier: it sleeps on idle, which drops every open socket.
+Add a **persistent disk** at `/opt/render/.cache/huggingface` (2 GB) so the
+~145 MB model is not re-downloaded on every deploy.
 
-**Persistent disk.** The Whisper weights are ~145 MB and download on first boot.
-The blueprint mounts a 2 GB disk at the HuggingFace cache path so redeploys do
-not re-download them.
+Verify:
 
-**Graceful shutdown.** `SIGTERM` closes the hub first, releasing every session
-and telling each client why, before the HTTP server stops — so a redeploy does
-not strand sessions or leave clients talking to a dead process.
+```bash
+curl https://YOUR-API.onrender.com/api/health
+```
 
-### Deploying the web app
+### 2. Vercel — `apps/web`
 
-Any static host. Build with `npm run build:web`, publish `apps/web/dist`, and
-set `VITE_API_URL` / `VITE_WS_URL` to the Render service at build time.
+`vercel.json` at the repo root already sets the build. In the dashboard:
 
----
+| Setting | Value |
+|---|---|
+| Framework Preset | Other |
+| **Root Directory** | *(blank — the repo root)* |
+| Build Command | `npm run build:web` *(from vercel.json)* |
+| Output Directory | `apps/web/dist` *(from vercel.json)* |
+
+Environment variable — **Production** scope:
+
+| Key | Value |
+|---|---|
+| `VITE_API_URL` | `https://YOUR-API.onrender.com` |
+
+`VITE_WS_URL` is optional: the WebSocket URL is derived from `VITE_API_URL`,
+mapping `https` → `wss` automatically. Set it only if the socket is on a
+different host.
+
+> Vite inlines `VITE_*` at **build** time. Changing this variable requires a
+> redeploy — editing it in the dashboard alone changes nothing.
+
+### 3. Close the CORS loop
+
+Set `CORS_ORIGIN` on Render to your Vercel domain (e.g.
+`https://your-app.vercel.app`) and redeploy. Include preview domains as a
+comma-separated list if you want them to work too.
+
+### Why the backend is not on Vercel
+
+Vercel's serverless functions cannot hold a long-lived WebSocket, and this app's
+entire session model depends on one: the socket *is* the liveness signal that
+releases a session the moment a client disconnects. On serverless the session
+lifecycle — and the fix for the "session already in progress" bug — would not
+work. Render runs a persistent Node process, which is what this needs.
 
 ## Testing
 

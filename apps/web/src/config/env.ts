@@ -59,6 +59,25 @@ function resolveWebSocketOrigin(apiOrigin: string): string {
 const apiOrigin = resolveApiOrigin();
 const wsOrigin = resolveWebSocketOrigin(apiOrigin);
 
+/**
+ * Loud warning for the most likely production misconfiguration.
+ *
+ * The same-origin fallback is exactly right in development, where Vite proxies
+ * `/api` and `/ws` to the local backend. In production it is almost always
+ * wrong: the front end is on Vercel and the backend on Render, so falling back
+ * to the page's own origin points every request at a host that has no API. The
+ * failure looks like a dead microphone button with no obvious cause, so it is
+ * worth saying plainly in the console.
+ */
+if (raw.PROD && !raw.VITE_API_URL) {
+  console.warn(
+    '[config] VITE_API_URL is not set, so the app is calling its own origin ' +
+      `(${apiOrigin}). In production this should be your Render service URL. ` +
+      'Set VITE_API_URL at build time — Vite inlines it, so changing it later ' +
+      'requires a rebuild.',
+  );
+}
+
 export const env = {
   isDev: Boolean(raw.DEV),
   isProd: Boolean(raw.PROD),
