@@ -16,3 +16,6 @@ coverage/
 
 # Whisper model weights, downloaded at runtime.
 .cache/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

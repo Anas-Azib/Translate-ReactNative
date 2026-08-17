@@ -376,9 +376,18 @@ Verify:
 curl https://YOUR-API.onrender.com/api/health
 ```
 
-### 2. Vercel — `apps/web`
+### 2. Vercel — `apps/web` (only if you want the web client hosted)
 
-`vercel.json` at the repo root already sets the build. In the dashboard:
+Vercel hosts the **static web bundle only**. It must never point at the backend
+— see "Why the backend is not on Vercel" below.
+
+`vercel.json` at the repo root sets the build. It deliberately contains no
+comments: Vercel validates it with `additionalProperties: false`, so any extra
+key — including the common `"//"` pseudo-comment trick — is rejected outright
+with *Invalid request: should NOT have additional property '//'*. Explanations
+for those settings live here in the README instead.
+
+In the dashboard:
 
 | Setting | Value |
 |---|---|
@@ -386,6 +395,13 @@ curl https://YOUR-API.onrender.com/api/health
 | **Root Directory** | *(blank — the repo root)* |
 | Build Command | `npm run build:web` *(from vercel.json)* |
 | Output Directory | `apps/web/dist` *(from vercel.json)* |
+
+> **If your Vercel project currently fails with `The specified Root Directory
+> "server" does not exist`:** that setting is wrong. No `server/` directory has
+> ever existed in this repository — the backend is at `apps/server/`, and it
+> does not belong on Vercel at all. Either set Root Directory to blank (to host
+> the web client) or delete the Vercel project entirely (if you only need the
+> backend, which lives on Render).
 
 Environment variable — **Production** scope:
 

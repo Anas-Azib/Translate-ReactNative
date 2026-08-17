@@ -2,7 +2,7 @@
   "name": "translate-monorepo",
   "private": true,
   "version": "1.0.0",
-  "description": "Auto Transliteration — mobile-first speech translation (local Whisper → MyMemory → on-device speech synthesis)",
+  "description": "Auto Transliteration \u2014 mobile-first speech translation (local Whisper \u2192 MyMemory \u2192 on-device speech synthesis)",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -13,7 +13,6 @@
   },
   "scripts": {
     "dev": "concurrently -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
-    "_comment:dev:server": "PORT is pinned here on purpose: dev tooling often exports PORT for the web app (5173), and the API must not inherit it. Render sets PORT normally in production.",
     "dev:server": "cross-env PORT=8787 npm run dev --workspace @translate/server",
     "dev:web": "cross-env PORT=5173 npm run dev --workspace @translate/web",
     "build": "npm run build --workspace @translate/server && npm run build --workspace @translate/web",
