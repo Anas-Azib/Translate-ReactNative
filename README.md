@@ -396,12 +396,20 @@ In the dashboard:
 | Build Command | `npm run build:web` *(from vercel.json)* |
 | Output Directory | `apps/web/dist` *(from vercel.json)* |
 
-> **If your Vercel project currently fails with `The specified Root Directory
-> "server" does not exist`:** that setting is wrong. No `server/` directory has
-> ever existed in this repository — the backend is at `apps/server/`, and it
-> does not belong on Vercel at all. Either set Root Directory to blank (to host
-> the web client) or delete the Vercel project entirely (if you only need the
-> backend, which lives on Render).
+**Root Directory must be blank, or `apps/web`. Never `apps/server`.**
+
+| Root Directory | Result |
+|---|---|
+| *(blank)* | ✅ Uses `/vercel.json` — recommended |
+| `apps/web` | ✅ Uses `apps/web/vercel.json`, which installs from the repo root |
+| `apps/server` | ❌ `Missing script: "build:web"` — that is the backend, and it lives on Render |
+| `server` | ❌ `The specified Root Directory "server" does not exist` — never existed |
+
+`build:web` is a **root** script (`npm run build --workspace @translate/web`).
+Pointing Vercel at `apps/server` makes npm look for it in the backend's
+`package.json`, where it does not and should not exist. `apps/server` defines a
+`build:web` stub that does nothing but print this explanation and exit 1, so the
+failure names its own fix instead of surfacing npm's opaque error.
 
 Environment variable — **Production** scope:
 

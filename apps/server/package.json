@@ -15,7 +15,8 @@
     "test:ab": "vitest run tests/ab",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "check:providers": "tsx src/scripts/checkProviders.ts"
+    "check:providers": "tsx src/scripts/checkProviders.ts",
+    "build:web": "node -e \"console.error('\\n  build:web is a ROOT script and cannot run from apps/server.\\n  Your deploy platform Root Directory is set to apps/server.\\n\\n  Vercel  -> set Root Directory to BLANK (repo root), or to apps/web.\\n  Render  -> set Root Directory to BLANK and build with: npm run build:server\\n\\n  apps/server is the backend; it never builds the web client.\\n'); process.exit(1)\""
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
