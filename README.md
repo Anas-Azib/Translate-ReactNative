@@ -1,21 +1,22 @@
-# Auto Transliteration — mobile-first voice translation
+# Auto Transliteration — voice translation monorepo
 
 Speak in your language. They hear it in theirs.
 
-Built to the specification in `Plan_documant.pdf`: a mobile-first web app that
-takes microphone input, recognises the speech, translates it, and speaks the
-result back — with the backend owning every credential and every spend control.
-
 ```
    microphone → speech-to-text → translation → text-to-speech → audio out
-      (phone)      (Azure)        (Google NMT)   (Google TTS)     (phone)
-                      └───────────── backend ──────────────┘
+     (device)   Whisper, local     MyMemory     browser engine   (device)
+                     └──────── backend ────────┘
+                          over one WebSocket
 ```
 
-The plan document specifies React Native; this is the same architecture and the
-same flow delivered as a mobile-first **web** app, as requested. Everything
-below the UI layer — the pipeline, the usage control, the failure policies — is
-identical to what a React Native client would talk to.
+**No API keys. No cloud accounts. No per-request cost.** Speech recognition runs
+locally with Whisper, translation uses MyMemory's free keyless API, and the
+browser's own speech engine reads the translation aloud.
+
+> **A note on the client.** `apps/web` is a mobile-first **web** app (Vite +
+> React DOM), not React Native — there is no Expo, Metro, or React Navigation in
+> this repository and never has been. See
+> [Client platform](#client-platform-important) before planning mobile work.
 
 ---
 
@@ -29,189 +30,369 @@ npm install
 npm run dev
 ```
 
-Then open **http://localhost:5173** (API on `:8787`).
+Open **http://localhost:5173** (API and WebSocket on `:8787`).
 
-No API keys are required to run it. Without credentials each provider falls back
-to a deterministic offline implementation, so the full flow — recording, silence
-detection, recognition, translation, playback, quota enforcement — works end to
-end with zero spend. Add keys to `.env` (see `.env.example`) and the same code
-paths call the real services.
+First run downloads the Whisper weights (~145 MB for `whisper-base`), cached
+after. `PROVIDER_MODE=mock` skips the download for offline development.
 
 ---
 
-## Architecture
+## Monorepo structure
 
 ```
-client/                     mobile-first React app
-  src/
-    animations/             GSAP: aurora, mic orb, text reveal, transitions
-    components/             ui/ (orb, cards, sheet, meter) + screens/
-    experiments/            A/B assignment + conversion tracking
-    hooks/                  useTranslationSession — the live loop
-    services/               api client, recorder, VAD, playback
-    styles/                 design tokens, base, components
-    types/
-
-server/                     the only thing that holds credentials
-  src/
-    services/               Azure STT · Google NMT · Google TTS (+ offline doubles)
-                            pipeline.ts   — orchestration
-                            segmenter.ts  — what is worth paying to translate
-                            circuit.ts    — hard stop after a provider says stop
-    usage/                  quotaManager.ts — daily / session / global limits
-    experiments/            assignment, event store, significance testing
-    lib/                    config, errors, crypto, cache, languages
-    routes/                 session · translate · ab · meta
+translate-ReactNative/
+│
+├── apps/
+│   ├── web/                    mobile-first React web client
+│   │   ├── src/
+│   │   │   ├── animations/     GSAP: aurora, mic orb, transitions
+│   │   │   ├── components/     ui/ + screens/
+│   │   │   ├── config/         env.ts — dev/prod URL resolution
+│   │   │   ├── experiments/    A/B assignment + tracking
+│   │   │   ├── hooks/          useTranslationSession, useTypewriter
+│   │   │   ├── services/       wsClient, recorder, vad, wav, speech, api
+│   │   │   ├── styles/
+│   │   │   └── types/
+│   │   ├── .env.example        PUBLIC values only
+│   │   └── package.json
+│   │
+│   └── server/                 Node backend (Express + ws)
+│       ├── src/
+│       │   ├── ws/             hub, connection, sessionRegistry
+│       │   ├── services/       whisper, mymemory, pipeline, segmenter, circuit
+│       │   ├── usage/          quotaManager, store
+│       │   ├── experiments/
+│       │   ├── lib/            audio, config, errors, crypto, languages
+│       │   └── routes/
+│       ├── .env.example        BACKEND-ONLY values
+│       ├── build.mjs           esbuild bundle for Render
+│       └── package.json
+│
+├── packages/
+│   └── shared/                 the contract both sides import
+│       ├── src/
+│       │   ├── sessionState.ts session state machine
+│       │   ├── protocol.ts     WebSocket message union
+│       │   └── text.ts         text reconciliation (anti-duplication)
+│       └── package.json
+│
+├── render.yaml                 Render blueprint (deploys apps/server only)
+├── package.json                npm workspaces
+└── README.md
 ```
 
-### Why the audio goes through the backend
-
-Azure's browser SDK would be faster to wire up, but the plan document's data
-flow is `Phone → Backend → Speech API`, and routing audio through the server is
-what keeps the subscription key off the device. The client never learns a
-provider URL, let alone a credential — `/api/config` is deliberately free of
-both.
+Tooling is **npm workspaces** alone. Turborepo was considered and rejected: with
+two apps and one library, the build graph is `shared → {web, server}` and takes
+under a second — a task orchestrator would add configuration without saving time.
 
 ---
 
-## Cost controls
+## Local development
 
-Every constraint on p.4 of the plan document is enforced server-side, before any
-upstream call. The client is never trusted to report its own usage.
+```bash
+npm install          # installs all workspaces and links packages/shared
+npm run dev          # server on :8787 + web on :5173, both hot-reloading
+```
 
-| Constraint | Where | Behaviour |
-|---|---|---|
-| Max translation time per day / month | `QuotaManager` | New sessions refused once spent |
-| Session time limit | `QuotaManager` | Session auto-stops; user must explicitly start a new one |
-| No indefinite microphone | `VoiceActivityDetector` + session cap | Mic stops itself after sustained silence |
-| No silent audio sent upstream | `vad.ts`, `segmenter.ts` | Silence never leaves the device; a server-side floor rejects it again |
-| Only finalized segments translated | `segmenter.ts` | Filler ("uh"), duplicates, and low-confidence text are dropped before Google |
-| No unnecessary TTS | `pipeline.ts` + `TtlCache` | Identical text is served from cache and billed nothing |
-| Max text size per request | `QuotaManager` | Over-long transcripts are clamped on a word boundary |
-| Concurrent sessions per user / globally | `QuotaManager` | Refused with a plain-language message |
-| Reject at internal quota | `QuotaManager` | `429` before a single upstream call |
-| Track usage per user and globally | `UsageStore` | Per-day and per-month buckets, derived only from bytes the server handled |
-| Budget alerting | `GET /api/metrics` | Character spend vs. the free-tier ceilings, ready to scrape |
-| Never expose credentials | `middleware`, `routes/meta.ts` | Keys live only in server env; error detail is never returned |
+Individual services:
 
-The free-tier ceilings from the plan document are configured as app-wide caps
-(`450k` translation characters and `3.8M` TTS characters per month), so the app
-stops itself before Google starts charging.
+```bash
+npm run dev:server
+```
 
-### Failure behaviour
+```bash
+npm run dev:web
+```
 
-The failure tables on p.2–3 are encoded once, in `server/src/lib/errors.ts`, and
-drive both the HTTP status and the retry policy:
+Or by workspace name:
 
-| Provider says | We do | User sees |
-|---|---|---|
-| `NoMatch` | Not an error; nothing billed downstream | "No speech recognized" |
-| `AuthenticationFailure` | **Stop.** Halt the provider, never retry | "Speech service authentication failed." |
-| Bad request | **Stop.** Never retry unchanged | "That request couldn't be processed…" |
-| Quota exceeded | **Stop all requests.** Never retry | "Service limit was reached…" |
-| 5xx / network | Retry with backoff | "The service is busy…" |
+```bash
+npm run dev --workspace @translate/server
+```
 
-`ProviderCircuit` makes the hard stops real: after an auth failure or a quota
-stop, further calls are refused locally without touching the network. Retrying
-into a `429` is exactly how a small overage becomes a large bill.
-
-### Privacy
-
-Audio is encrypted with AES-256-GCM the moment it arrives, decrypted only for
-the instant a provider needs it, and shredded on every path including thrown
-errors — `GET /api/metrics` exposes `pendingAudioBuffers`, which is `0` between
-requests. Device ids are salted and hashed before they touch a counter, so usage
-and experiment data cannot be traced back to a device.
+| Command | Does |
+|---|---|
+| `npm run dev` | Both services with hot reload |
+| `npm run build` | Build server bundle + web bundle |
+| `npm run build:server` | Server only (what Render runs) |
+| `npm start` | Run the built server |
+| `npm run typecheck` | Strict TypeScript across all three workspaces |
+| `npm test` | Full suite — 555 tests |
+| `npm run check:providers` | Load Whisper and call MyMemory; report what works |
 
 ---
 
-## The interface
+## Client platform (important)
 
-Apple's design language, applied to a colourful app: system-palette accents,
-frosted materials, large continuous corners, 44 pt minimum targets, safe-area
-insets, and motion built on custom eases (`apple-out`, `apple-spring`) so the
-whole app moves like one system. Light and dark themes both ship.
+This repository contains **no React Native code**. `apps/web` is Vite +
+`react-dom`, rendering to `index.html` with CSS stylesheets and GSAP animating
+DOM nodes.
 
-It is designed for someone who has never used a translation app. There is one
-obvious control. Copy avoids every internal term — no "quota", "session", or
-"API" appears anywhere in the UI. The time budget reads as "1:38 left" and turns
-amber then red before it stops, so the cutoff is never a surprise.
+If a React Native app is wanted, the monorepo is already shaped for it: add
+`apps/mobile`, depend on `@translate/shared`, and the session state machine,
+WebSocket protocol, and text-reconciliation logic all work unchanged — they are
+platform-agnostic TypeScript with no DOM dependencies. What would need rewriting
+is the presentation layer (GSAP → Reanimated, CSS → StyleSheet) and the device
+layer (`getUserMedia`/`AudioContext` → `expo-av`, `speechSynthesis` →
+`expo-speech`).
 
-### Animation
+---
 
-GSAP drives a handful of systems that are load-bearing rather than decorative:
+## The session lifecycle
 
-- **Aurora background** — five blobs on independent, non-repeating timelines,
-  energised in real time by microphone amplitude.
-- **Mic orb** — a morphing `MorphSVG` core, staggered ripple rings, a 40-bar
-  circular equaliser, a `DrawSVG` budget ring, and a `Physics2D` particle burst
-  on a completed translation. The equaliser runs on `gsap.ticker`, entirely
-  outside React's render cycle, because amplitude arrives at 60 Hz.
-- **Text reveal** — per-character 3D rise, except for Arabic and other cursive
-  scripts, which split by word so letter joining survives. The split carries an
-  `aria-label` so the accessible name never fragments, and restores itself if
-  interrupted.
-- **Language swap** — `Flip`, because the chips are different widths and the
-  travel distance is only knowable after the DOM reorders.
-- **Sheets** — iOS presentation: the sheet rises while the content behind it
-  scales and dims.
+The microphone is one state machine, defined once in
+`packages/shared/src/sessionState.ts` and imported by **both** the client and
+the server.
 
-`prefers-reduced-motion` is honoured globally.
+```
+        ┌──────────────────────── RESET ────────────────────────┐
+        │                                                       │
+      IDLE ──START──> STARTING ──STARTED──> ACTIVE ──PAUSE──> PAUSED
+        ▲                 │                  │  ▲                │
+        │                 │                  │  └─── RESUME ─────┘
+        │                 │            CONNECTION_LOST
+        │                 │                  ↓
+        │                 │            RECONNECTING ──RECONNECTED──> ACTIVE
+        │                 │                  │
+        │                 └──── FAIL ───> ERROR ──START──> STARTING
+        │                                    │
+        └──STOPPED── STOPPING <──STOP────────┘
+```
+
+Transitions not in the table are **impossible by construction**. That is what
+makes rapid tapping safe: `START` has no transition out of `STARTING` or
+`ACTIVE`, so three taps produce one session rather than three.
+
+It also makes the reported contradictory state unrepresentable. There is no way
+to express "not recording, not paused, but the backend thinks a session is
+live", because the session is a single value and whether it holds a server slot
+is *derived* from that value rather than tracked separately.
+
+### Why "session already in progress" no longer happens
+
+**Root cause.** A session used to be a row in the `QuotaManager` and nothing
+more. The only thing that removed it was a 120-second idle reaper polled every
+30 seconds. Any client that vanished without calling `/stop` — a closed tab, a
+refresh, a crash, a dropped network, or an error thrown on the stop path — left
+the row behind. `startSession` then saw `activeSessionsFor(user) >= 1` and
+refused, locking the user out for up to two and a half minutes.
+
+**Two changes fix it:**
+
+1. **The connection is the session's lifetime.** One socket owns one session
+   (`apps/server/src/ws/sessionRegistry.ts`). When that socket closes — cleanly,
+   abruptly, or by heartbeat timeout — the session is released immediately.
+   There is no window in which a dead client holds a live slot.
+
+2. **Ownership transfers instead of blocking.** If the same device opens a new
+   connection and starts, the older session is *superseded*: the previous owner
+   receives `session.superseded`, its socket closes with code 4001, and the slot
+   is handed over. The concurrency limit still applies across *different* users,
+   which is what it was actually for — it was never meant to stop someone
+   restarting their own microphone.
+
+**Half-open sockets** are covered by a ping/pong heartbeat (15 s interval, 40 s
+budget). A phone that loses signal leaves a socket that looks open forever from
+the server's side; without the heartbeat that is the original bug wearing a
+different hat.
+
+**Verified live** — the exact reported scenario:
+
+```
+1) start session over WS          → active
+2) client vanishes (terminate, no stop frame)
+3) same device reconnects, starts → active,  errors: none
+```
+
+---
+
+## Letter-by-letter text
+
+Both the detected speech and the translation reveal character by character, with
+**independent** animation states.
+
+### Two-stage delivery
+
+The server pushes the transcript the moment recognition finishes, *before*
+requesting the translation:
+
+```
+audio ──> Whisper ──> transcript ────────────> client starts animating source
+                          │
+                          └──> MyMemory ─────> translation ──> client animates target
+```
+
+Measured on a live run: transcript at **821 ms**, translation at **1600 ms** — a
+779 ms head start during which the source text is already typing. The two texts
+are separate `useTypewriter` instances, so neither blocks or restarts the other.
+
+### Why duplication cannot occur
+
+Every update carries the **complete text so far**, not a delta. The renderer
+reconciles rather than appends (`packages/shared/src/text.ts`):
+
+| Update | Classified | Behaviour |
+|---|---|---|
+| `Hell` → `Hello` | `extended` | Keep all revealed characters, keep typing |
+| `Hello world` → `Hello there` | `diverged` | Rewind to `Hello `, retype the tail |
+| `Hello` → `Hello` | `unchanged` | Nothing |
+| `Hello` → `` | `cleared` | Clear |
+
+So a stream of `H` / `He` / `Hel` / `Hell` / `Hello` renders `Hello`, never
+`HHeHelHellHello`. Appending would produce the second; reconciling produces the
+first. The `extended` case is also what keeps a fast stream looking like one
+continuous animation instead of restarting on every update.
+
+Whisper is batch — it emits one final transcript per utterance, so there are no
+interim results today. The protocol carries `isFinal` and the typewriter is
+prefix-safe regardless, so a streaming recogniser can be dropped in without
+touching either.
+
+Other guarantees: empty text is safe, updates arriving faster than frames are
+handled, graphemes are never split mid-emoji, and `prefers-reduced-motion`
+switches to instant display.
+
+---
+
+## WebSocket handling
+
+One socket, strictly managed (`apps/web/src/services/wsClient.ts`):
+
+- `connect()` while connecting or open is a no-op returning the existing promise
+  — double-tapping cannot open two sockets.
+- Handlers are keyed to a **generation counter**. A replaced socket's events are
+  dropped, so a dying socket can never push state into React or resurrect a
+  closed session.
+- `disconnect()` sets a flag that cancels pending reconnects — otherwise an
+  intentional stop races a retry and silently reopens the session.
+- Reconnection is bounded (5 attempts, exponential backoff capped at 10 s) and
+  skipped entirely for `SUPERSEDED`, `PROTOCOL_MISMATCH`, and normal closes.
+- States: `connecting → connected → disconnecting → disconnected`, plus `error`.
+
+Development uses `ws://`, production `wss://` — derived automatically from the
+API origin's scheme, so an `https` page can never open an insecure socket.
+
+---
+
+## Environment variables
+
+Split by app, with the security boundary enforced by naming:
+
+| File | Contents | Exposure |
+|---|---|---|
+| `apps/web/.env.example` | `VITE_API_URL`, `VITE_WS_URL` | **Public** — inlined into the JS bundle |
+| `apps/server/.env.example` | ports, model, quotas, `MYMEMORY_EMAIL`, `PAYLOAD_ENCRYPTION_KEY` | Server only |
+
+Vite exposes **only** `VITE_`-prefixed variables. No backend variable uses that
+prefix, so a server secret cannot reach the client even by accident. (There are
+no third-party API keys in this project at all — Whisper is local and MyMemory
+is keyless.)
+
+### Development vs production URLs
+
+No component ever writes a URL; everything resolves in
+`apps/web/src/config/env.ts`.
+
+**Development** — leave both blank. The Vite dev server proxies `/api` and `/ws`
+to `localhost:8787`, so same-origin just works.
+
+**Production** — `apps/web/.env.production`:
+
+```bash
+VITE_API_URL=https://YOUR-SERVICE.onrender.com
+VITE_WS_URL=wss://YOUR-SERVICE.onrender.com
+```
+
+Set only `VITE_API_URL` and the WebSocket URL is derived from it (`https` → `wss`).
+
+---
+
+## Render deployment
+
+Deploys `apps/server` only. The web app is a static bundle and belongs on a
+static host.
+
+### Using the blueprint
+
+Commit `render.yaml`, then **Render → New → Blueprint** and select the repo.
+
+### Configuring by hand
+
+| Setting | Value |
+|---|---|
+| Type | Web Service |
+| Runtime | Node |
+| **Root Directory** | *(leave blank — the repo root)* |
+| Build Command | `npm ci && npm run build:server` |
+| Start Command | `node apps/server/dist/index.js` |
+| Health Check Path | `/api/health` |
+| Instance Type | Starter or above |
+
+**Root Directory must be the repo root, not `apps/server`.** This is the step
+that catches people out with npm workspaces: `npm install` inside `apps/server`
+cannot resolve `@translate/shared`, because the workspace symlinks only exist
+when npm installs from the root.
+
+Environment variables:
+
+| Key | Value | Why |
+|---|---|---|
+| `NODE_ENV` | `production` | |
+| `HOST` | `0.0.0.0` | Binding to localhost makes the service unreachable and fails the health check |
+| `PORT` | *(do not set)* | Render injects it; the app reads `process.env.PORT` |
+| `CORS_ORIGIN` | your web app's origin | `*` works but lock it down |
+| `WHISPER_MODEL` | `onnx-community/whisper-base` | `whisper-tiny` if memory constrained |
+| `WHISPER_WARMUP` | `true` | Loads weights at boot so the first user does not wait |
+| `MYMEMORY_EMAIL` | your address | Raises the daily allowance ~5k → ~50k characters |
+| `PAYLOAD_ENCRYPTION_KEY` | generate | Encrypts the in-flight audio buffer |
+
+**WebSockets.** Render supports them on paid instances with no extra
+configuration — the upgrade shares the HTTP port, which is why the WS server is
+attached to the existing HTTP server rather than listening separately. Avoid the
+free tier: it sleeps on idle, which drops every open socket.
+
+**Persistent disk.** The Whisper weights are ~145 MB and download on first boot.
+The blueprint mounts a 2 GB disk at the HuggingFace cache path so redeploys do
+not re-download them.
+
+**Graceful shutdown.** `SIGTERM` closes the hub first, releasing every session
+and telling each client why, before the HTTP server stops — so a redeploy does
+not strand sessions or leave clients talking to a dead process.
+
+### Deploying the web app
+
+Any static host. Build with `npm run build:web`, publish `apps/web/dist`, and
+set `VITE_API_URL` / `VITE_WS_URL` to the Render service at build time.
 
 ---
 
 ## Testing
 
 ```bash
-npm test               # everything — 378 tests
+npm test                # 555 tests across all workspaces
 npm run test:unit
 npm run test:integration
 npm run test:ab
-npm run test:coverage
 ```
 
-**Unit** — quota ceilings and rollover, the failure-classification tables,
-segment gating, provider request/response shapes, encryption and shredding, the
-VAD state machine against a scripted amplitude envelope, the API client's retry
-policy, and the animation primitives.
-
-**Integration** — the real Express app driven over HTTP with only the three
-providers doubled: full pipeline, session lifecycle, quota rejections, upload
-limits, credential leakage, and per-device isolation. On the client, the real
-component tree with only the network doubled: boot, onboarding, language
-selection, and the complete speak → translate → play loop.
-
-**A/B** — assignment determinism, distribution, and independence between
-experiments; the two-proportion z-test, confidence intervals, and sample-size
-maths against known values; per-user conversion counting; and assertions that
-each variant genuinely renders a different experience.
-
-### Running experiments
-
-Four are live: `mic_control` (hold vs tap), `onboarding` (guided vs instant),
-`autoplay_tts` (which is also a cost experiment), and `result_layout`.
-
-Assignment is a deterministic hash of `salt : experiment : user`, so a user
-always lands in the same variant with nothing stored, and experiments are
-independent of one another. Force a variant with `?ab_mic_control=tap`. Read
-results at `GET /api/ab/report` — each metric comes back with conversion rates,
-a p-value, a 95% confidence interval, a ship verdict, and the sample size the
-observed effect would need.
+| Suite | Covers |
+|---|---|
+| `packages/shared` (59) | State machine: rapid taps, restart, connection loss, illegal transitions, contradictory-state impossibility. Text reconciliation: the `H`/`He`/`Hel` → `Hello` guarantee, corrections, graphemes |
+| `apps/server` (277) | WS session lifecycle over real sockets — abrupt disconnect, takeover, rapid Start/Stop, two-stage delivery, paused audio dropped, shutdown cleanup. Plus quotas, providers, audio decoding, failure classification |
+| `apps/web` (219) | Typewriter (no duplication, continuity, independence), session hook against a scripted socket, VAD, WAV encoding, speech synthesis, A/B |
 
 ---
 
-## Configuration
+## Cost and safety controls
 
-See `.env.example`. Provider mode is per service: with only Google keys present,
-translation and TTS go live while speech recognition stays on the offline
-provider, so the app is demoable at every stage of credential setup.
+Enforced server-side before any provider call; the client never reports its own
+usage. Session and daily/monthly time limits, per-user and global concurrency,
+a 500-character cap (MyMemory's own limit), silence gating, filler and duplicate
+rejection, and an app-wide daily character ceiling. `GET /api/metrics` exposes
+the counters for alerting.
 
-## Scripts
-
-| Command | Does |
-|---|---|
-| `npm run dev` | API + client with hot reload |
-| `npm run build` | Type-check and build both |
-| `npm start` | Run the built API |
-| `npm run typecheck` | Strict TypeScript across both workspaces |
-| `npm test` | Full suite |
+Audio is encrypted with AES-256-GCM on arrival, decrypted only for the instant
+the recogniser needs it, and shredded on every path including thrown errors —
+`pendingAudioBuffers` is `0` between requests. Recognition and synthesis are
+local, so the only thing leaving your infrastructure is the recognised *text*
+sent to MyMemory.

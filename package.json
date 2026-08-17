@@ -1,29 +1,32 @@
 {
-  "name": "auto-transliteration",
+  "name": "translate-monorepo",
   "private": true,
   "version": "1.0.0",
-  "description": "Auto Transliteration — mobile-first speech translation web app (Azure STT → Google Translation NMT → Google TTS)",
+  "description": "Auto Transliteration — mobile-first speech translation (local Whisper → MyMemory → on-device speech synthesis)",
   "type": "module",
   "workspaces": [
-    "server",
-    "client"
+    "packages/*",
+    "apps/*"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -n server,client -c magenta,cyan \"npm:dev:server\" \"npm:dev:client\"",
-    "_comment:dev:server": "PORT is pinned here on purpose: dev tooling often exports PORT for the web app (5173), and the API must not inherit it. Deployments still set PORT normally.",
-    "dev:server": "cross-env PORT=8787 npm run dev --workspace server",
-    "dev:client": "cross-env PORT=5173 npm run dev --workspace client",
-    "build": "npm run build --workspace server && npm run build --workspace client",
-    "start": "npm run start --workspace server",
-    "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace client",
-    "test": "npm run test --workspace server && npm run test --workspace client",
-    "test:unit": "npm run test:unit --workspace server && npm run test:unit --workspace client",
-    "test:integration": "npm run test:integration --workspace server && npm run test:integration --workspace client",
-    "test:ab": "npm run test:ab --workspace server && npm run test:ab --workspace client",
-    "test:coverage": "npm run test:coverage --workspace server && npm run test:coverage --workspace client"
+    "dev": "concurrently -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "_comment:dev:server": "PORT is pinned here on purpose: dev tooling often exports PORT for the web app (5173), and the API must not inherit it. Render sets PORT normally in production.",
+    "dev:server": "cross-env PORT=8787 npm run dev --workspace @translate/server",
+    "dev:web": "cross-env PORT=5173 npm run dev --workspace @translate/web",
+    "build": "npm run build --workspace @translate/server && npm run build --workspace @translate/web",
+    "build:server": "npm run build --workspace @translate/server",
+    "build:web": "npm run build --workspace @translate/web",
+    "start": "npm run start --workspace @translate/server",
+    "typecheck": "npm run typecheck --workspace @translate/shared && npm run typecheck --workspace @translate/server && npm run typecheck --workspace @translate/web",
+    "test": "npm run test --workspace @translate/shared && npm run test --workspace @translate/server && npm run test --workspace @translate/web",
+    "test:unit": "npm run test:unit --workspace @translate/shared && npm run test:unit --workspace @translate/server && npm run test:unit --workspace @translate/web",
+    "test:integration": "npm run test:integration --workspace @translate/server && npm run test:integration --workspace @translate/web",
+    "test:ab": "npm run test:ab --workspace @translate/server && npm run test:ab --workspace @translate/web",
+    "test:coverage": "npm run test:coverage --workspace @translate/server && npm run test:coverage --workspace @translate/web",
+    "check:providers": "npm run check:providers --workspace @translate/server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

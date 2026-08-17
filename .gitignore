@@ -1,8 +1,18 @@
 node_modules/
 dist/
+build/
 coverage/
+
+# Secrets and local config — only the .example files are committed.
 .env
-.env.local
+.env.*
+!.env.example
+!.env.*.example
+
 *.log
 .DS_Store
 .vite/
+.turbo/
+
+# Whisper model weights, downloaded at runtime.
+.cache/

@@ -1,0 +1,75 @@
+# Render blueprint — deploys apps/server only.
+#
+# The web app is NOT deployed here: it is a static bundle and belongs on a
+# static host. This service is the Node backend, and nothing in this file
+# references apps/web.
+#
+# Commit this file and use Render → New → Blueprint, or configure the same
+# values by hand in the dashboard (see README → Render deployment).
+
+services:
+  - type: web
+    name: translate-api
+    runtime: node
+    plan: starter # WebSockets need a paid instance: the free tier sleeps, which drops sockets.
+    region: frankfurt # move this closer to your users if needed
+
+    # Build from the repo ROOT, not apps/server.
+    #
+    # This is the part that trips people up with npm workspaces: running
+    # `npm install` inside apps/server cannot resolve @translate/shared,
+    # because the workspace symlinks only exist when npm installs from the
+    # root. So we install at the root and then build just the server.
+    rootDir: .
+    buildCommand: npm ci && npm run build:server
+    startCommand: node apps/server/dist/index.js
+
+    # Render polls this. It must not depend on the Whisper model being warm.
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Bind address. Render routes to the container's external interface;
+      # binding to localhost makes the service unreachable and fails the
+      # health check with no obvious error.
+      - key: HOST
+        value: 0.0.0.0
+
+      # Do NOT set PORT. Render injects it, and the app reads process.env.PORT.
+
+      # Lock this down to your web app's real origin before going live.
+      - key: CORS_ORIGIN
+        value: '*'
+
+      # whisper-base is the accuracy/size balance that gets Arabic right.
+      # Drop to whisper-tiny if the instance is memory constrained.
+      - key: WHISPER_MODEL
+        value: onnx-community/whisper-base
+      - key: WHISPER_DTYPE
+        value: q8
+
+      # Load the model at boot so the first user does not pay the cold start.
+      - key: WHISPER_WARMUP
+        value: 'true'
+
+      # Raises MyMemory's daily allowance from ~5k to ~50k characters.
+      # Set this in the Render dashboard rather than committing an address.
+      - key: MYMEMORY_EMAIL
+        sync: false
+
+      # Encrypts the in-flight audio buffer. Render generates and stores it.
+      - key: PAYLOAD_ENCRYPTION_KEY
+        generateValue: true
+
+      # Keep the app-wide daily spend under MyMemory's allowance.
+      - key: QUOTA_GLOBAL_DAILY_TRANSLATED_CHARS
+        value: '45000'
+
+    # The model weights are ~145MB and download on first boot. A disk keeps
+    # them across restarts so every deploy does not re-download.
+    disk:
+      name: model-cache
+      mountPath: /opt/render/.cache/huggingface
+      sizeGB: 2
