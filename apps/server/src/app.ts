@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import express from 'express';
 import type { Express } from 'express';
 import cors from 'cors';
@@ -16,6 +17,7 @@ import { createProviders } from './services/providerFactory.js';
 import type { Providers } from './types/index.js';
 import { identityMiddleware } from './middleware/identity.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { findWebDist } from './lib/staticSite.js';
 import { sessionRoutes } from './routes/session.js';
 import { translateRoutes } from './routes/translate.js';
 import { experimentRoutes } from './routes/experiments.js';
@@ -126,12 +128,50 @@ export function createApp(deps: AppDeps = {}): BuiltApp {
   app.use('/api/translate', translateRoutes(pipeline, quota, config));
   app.use('/api/ab', experimentRoutes(experiments, config));
 
+  // Unmatched API routes answer with JSON, never the SPA shell — a fetch that
+  // silently receives HTML is far harder to debug than a clean 404.
   app.use('/api', (_req, res) => {
     res.status(404).json({
       ok: false,
       error: { kind: 'bad_request', provider: 'backend', message: 'Not found', retryable: false },
     });
   });
+
+  /**
+   * Serve the built web client, when one exists.
+   *
+   * This is what makes a single-service deployment possible: the API, the
+   * WebSocket, and the front end all share one origin, so there is no CORS to
+   * configure and the client's same-origin fallback resolves correctly with no
+   * environment variables at all.
+   *
+   * Skipped entirely in development, where Vite serves the client on its own
+   * port with hot reload.
+   */
+  const webDist = findWebDist();
+  if (webDist) {
+    app.use(
+      express.static(webDist, {
+        // The shell must never be cached from here; it is served explicitly
+        // below so a deploy cannot leave clients pinned to stale asset URLs.
+        index: false,
+        setHeaders: (res, path) => {
+          // Vite emits content-hashed filenames under /assets, so those are
+          // safe to cache forever.
+          if (path.includes(`${'/'}assets${'/'}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      }),
+    );
+
+    // SPA fallback. Registered after the API and after static files, so it only
+    // catches routes that are neither.
+    app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+      res.sendFile(join(webDist, 'index.html'));
+    });
+  }
 
   app.use(errorHandler(isProduction));
 

@@ -309,134 +309,86 @@ Set only `VITE_API_URL` and the WebSocket URL is derived from it (`https` → `w
 
 ## Deployment
 
-Two services, deployed separately from one repo:
+You have two options. **Option A is simpler and needs no Vercel project at all.**
+
+### Option A — one Render service (recommended)
+
+The backend serves the built web client from the same origin, so the API, the
+WebSocket, and the front end all live at one URL.
 
 ```
-        GitHub — one repo
-              │
-    ┌─────────┴─────────┐
-    │                   │
-  Vercel              Render
-  apps/web            apps/server
-  static bundle       Node + WebSocket
-    │                   │
-    └──── wss:// ───────┘
+        GitHub
+           │
+           ▼
+      Render (one service)
+   ┌──────────────────────┐
+   │  /            → web  │
+   │  /api/*       → API  │
+   │  /ws          → WS   │
+   └──────────────────────┘
 ```
-
-**Deploy Render first** — you need its URL before building the front end, because
-Vite inlines the API URL at build time.
-
-### Order of operations
-
-1. Deploy the backend to Render → get `https://YOUR-API.onrender.com`
-2. Deploy the front end to Vercel with `VITE_API_URL` set to that URL
-3. Set Render's `CORS_ORIGIN` to your Vercel domain
-4. Redeploy Render so the CORS change takes effect
-
-### 1. Render — `apps/server`
-
-Either commit `render.yaml` and use **New → Blueprint**, or configure manually:
 
 | Setting | Value |
 |---|---|
 | Type | Web Service |
 | Runtime | Node |
 | **Root Directory** | *(blank — the repo root)* |
-| Build Command | `npm ci && npm run build:server` |
+| Build Command | `npm ci && npm run build` |
 | Start Command | `node apps/server/dist/index.js` |
 | Health Check Path | `/api/health` |
 | Instance Type | Starter or above |
 
-**Root Directory must be blank.** `npm install` inside `apps/server` cannot
-resolve `@translate/shared` — npm workspace symlinks only exist when the install
-runs at the root.
+Why this is the easy path:
 
-**Do not use the free tier.** It sleeps after inactivity, which drops every open
-WebSocket and takes ~50 s to wake.
+- **No CORS.** Same origin, so `CORS_ORIGIN` is irrelevant.
+- **No `VITE_API_URL`.** The client falls back to its own origin, which is
+  correct here — there is nothing to configure and nothing to keep in sync.
+- **No second provider.** Delete the Vercel project.
 
-Environment variables:
+Environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, **`PORT` unset**
+(Render injects it), `WHISPER_MODEL=onnx-community/whisper-base`,
+`WHISPER_WARMUP=true`, `MYMEMORY_EMAIL=<your email>`,
+`PAYLOAD_ENCRYPTION_KEY=<random>`. Add a 2 GB disk at
+`/opt/render/.cache/huggingface` so the model is not re-downloaded per deploy.
 
-| Key | Value |
-|---|---|
-| `NODE_ENV` | `production` |
-| `HOST` | `0.0.0.0` |
-| `PORT` | *(do not set — Render injects it)* |
-| `CORS_ORIGIN` | your Vercel domain (step 3) |
-| `WHISPER_MODEL` | `onnx-community/whisper-base` |
-| `WHISPER_WARMUP` | `true` |
-| `MYMEMORY_EMAIL` | your email — raises the daily allowance ~5k → ~50k chars |
-| `PAYLOAD_ENCRYPTION_KEY` | generate a random value |
+Do not use the free tier: it sleeps on idle, which drops every open WebSocket.
 
-Add a **persistent disk** at `/opt/render/.cache/huggingface` (2 GB) so the
-~145 MB model is not re-downloaded on every deploy.
+### Option B — Render for the API, Vercel for the web client
 
-Verify:
+Only worth it if you want Vercel's CDN. It adds a CORS boundary and a build-time
+URL to keep in sync.
 
-```bash
-curl https://YOUR-API.onrender.com/api/health
-```
+**Render** — same as above but Build Command `npm ci && npm run build:server`,
+and set `CORS_ORIGIN` to your Vercel domain.
 
-### 2. Vercel — `apps/web` (only if you want the web client hosted)
-
-Vercel hosts the **static web bundle only**. It must never point at the backend
-— see "Why the backend is not on Vercel" below.
-
-`vercel.json` at the repo root sets the build. It deliberately contains no
-comments: Vercel validates it with `additionalProperties: false`, so any extra
-key — including the common `"//"` pseudo-comment trick — is rejected outright
-with *Invalid request: should NOT have additional property '//'*. Explanations
-for those settings live here in the README instead.
-
-In the dashboard:
-
-| Setting | Value |
-|---|---|
-| Framework Preset | Other |
-| **Root Directory** | *(blank — the repo root)* |
-| Build Command | `npm run build:web` *(from vercel.json)* |
-| Output Directory | `apps/web/dist` *(from vercel.json)* |
-
-**Root Directory must be blank, or `apps/web`. Never `apps/server`.**
+**Vercel** — Root Directory decides everything:
 
 | Root Directory | Result |
 |---|---|
 | *(blank)* | ✅ Uses `/vercel.json` — recommended |
 | `apps/web` | ✅ Uses `apps/web/vercel.json`, which installs from the repo root |
-| `apps/server` | ❌ `Missing script: "build:web"` — that is the backend, and it lives on Render |
-| `server` | ❌ `The specified Root Directory "server" does not exist` — never existed |
+| `apps/server` | ❌ `Missing script: "build:web"` — that is the backend |
+| `server` | ❌ Does not exist and never has |
+
+To change it: **Vercel → your project → Settings → Build & Deployment →
+Root Directory → Edit → clear the field → Save → Redeploy.**
 
 `build:web` is a **root** script (`npm run build --workspace @translate/web`).
 Pointing Vercel at `apps/server` makes npm look for it in the backend's
 `package.json`, where it does not and should not exist. `apps/server` defines a
-`build:web` stub that does nothing but print this explanation and exit 1, so the
-failure names its own fix instead of surfacing npm's opaque error.
+`build:web` stub that only prints this explanation and exits 1, so the failure
+names its own fix.
 
-Environment variable — **Production** scope:
-
-| Key | Value |
-|---|---|
-| `VITE_API_URL` | `https://YOUR-API.onrender.com` |
-
-`VITE_WS_URL` is optional: the WebSocket URL is derived from `VITE_API_URL`,
-mapping `https` → `wss` automatically. Set it only if the socket is on a
-different host.
-
-> Vite inlines `VITE_*` at **build** time. Changing this variable requires a
-> redeploy — editing it in the dashboard alone changes nothing.
-
-### 3. Close the CORS loop
-
-Set `CORS_ORIGIN` on Render to your Vercel domain (e.g.
-`https://your-app.vercel.app`) and redeploy. Include preview domains as a
-comma-separated list if you want them to work too.
+Then set `VITE_API_URL` to your Render URL in Vercel's **Production**
+environment variables. Vite inlines it at build time, so it must be set before
+the build runs.
 
 ### Why the backend is not on Vercel
 
 Vercel's serverless functions cannot hold a long-lived WebSocket, and this app's
-entire session model depends on one: the socket *is* the liveness signal that
-releases a session the moment a client disconnects. On serverless the session
-lifecycle — and the fix for the "session already in progress" bug — would not
-work. Render runs a persistent Node process, which is what this needs.
+session lifetime *is* the socket — it is what releases a session the moment a
+client disconnects. On serverless, the fix for the "session already in progress"
+bug would not work. Render runs a persistent process, which is what this needs.
 
 ## Testing
 

@@ -21,7 +21,11 @@ services:
     # because the workspace symlinks only exist when npm installs from the
     # root. So we install at the root and then build just the server.
     rootDir: .
-    buildCommand: npm ci && npm run build:server
+    # Builds BOTH the backend and the web client. The server serves the web
+    # bundle from the same origin, so this one service is the whole app: no
+    # CORS to configure, and no second hosting provider needed.
+    # Use `npm run build:server` instead if you host the front end elsewhere.
+    buildCommand: npm ci && npm run build
     startCommand: node apps/server/dist/index.js
 
     # Render polls this. It must not depend on the Whisper model being warm.
@@ -39,7 +43,9 @@ services:
 
       # Do NOT set PORT. Render injects it, and the app reads process.env.PORT.
 
-      # Lock this down to your web app's real origin before going live.
+      # Only needed if the web client is hosted on a DIFFERENT origin (e.g.
+      # Vercel). With the single-service setup above, the front end is served
+      # from this same origin and no CORS configuration applies at all.
       - key: CORS_ORIGIN
         value: '*'
 
